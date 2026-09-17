@@ -5,15 +5,16 @@
 # mixed spec-decode + prefill batches no longer abort the engine.
 #
 # Env overrides (all optional):
-#   MODEL, NAME, PORT, MAX_NUM_SEQS, GPU_UTIL, MTP_N, LANGUAGE_MODEL_ONLY,
-#   IMAGE, PATCH_DIR, TRITON_CACHE, SERVED_NAME, READY_TIMEOUT, EXTRA_ARGS
+#   MODEL, NAME, PORT, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS, GPU_UTIL, MTP_N,
+#   LANGUAGE_MODEL_ONLY, IMAGE, PATCH_DIR, TRITON_CACHE, SERVED_NAME,
+#   READY_TIMEOUT, EXTRA_ARGS
 #
 # MTP_N=0 disables speculative decoding (needed for the vision bring-up,
 # MAX_NUM_SEQ_FIX.md 11.1). EXTRA_ARGS is appended verbatim to `vllm serve`.
 #
 # Defaults: IMAGE=vllm-xpu-gdn-split:0.1.12.3-p1, NAME=swift-b70-mtp-split,
-# PORT=8080, MAX_NUM_SEQS=4, GPU_UTIL=0.94, MTP_N=3, LANGUAGE_MODEL_ONLY=1
-# (text-only), max-model-len 131072, max-num-batched-tokens 16384, fp8 KV,
+# PORT=8080, MAX_NUM_SEQS=4, MAX_NUM_BATCHED_TOKENS=8192, GPU_UTIL=0.94,
+# MTP_N=3, LANGUAGE_MODEL_ONLY=1 (text-only), max-model-len 131072, fp8 KV,
 # prefix caching.
 #
 # Run the unpatched pinned baseline instead:
@@ -28,13 +29,14 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-MODEL=${MODEL:-$SCRIPT_DIR/Swift-Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16}
+MODEL=${MODEL:-/opt/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16}
 PATCH_DIR=${PATCH_DIR:-$SCRIPT_DIR/patches}
 TRITON_CACHE=${TRITON_CACHE:-/opt/models/triton_cache}
 IMAGE=${IMAGE:-vllm-xpu-gdn-split:0.1.12.3-p1}
 NAME=${NAME:-swift-b70-mtp-split}
 PORT=${PORT:-8080}
-MAX_NUM_SEQS=${MAX_NUM_SEQS:-4}
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-2}
+MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-8192}
 GPU_UTIL=${GPU_UTIL:-0.94}
 MTP_N=${MTP_N:-3}
 # 1 = text-only (skip the vision tower, default), 0 = load the vision tower too
@@ -48,6 +50,13 @@ if [ "$MTP_N" = "0" ]; then SPEC_ARG=""; fi
 LMO_ARG=""
 if [ "$LANGUAGE_MODEL_ONLY" = "1" ]; then LMO_ARG="--language-model-only"; fi
 RENDER_GROUP=$(stat -c '%g' /dev/dri/render* | sort -u | head -1)
+
+# docker silently creates missing bind-mount sources as an empty root-owned dir,
+# which only surfaces later as vLLM "no config.json" -> fail before that happens
+if [ ! -f "$MODEL/config.json" ]; then
+  echo "FAIL: MODEL=$MODEL has no config.json" >&2
+  exit 1
+fi
 
 RUN_ID=$(date +%F_%H%M%S)
 OUT="$SCRIPT_DIR/artifacts/${RUN_ID}-${NAME}-seqs${MAX_NUM_SEQS}"
@@ -70,7 +79,7 @@ docker run -d --name "$NAME" --network host --ipc host \
   "set -e; python /patch_mtp.py; python /patch_boundary.py; exec vllm serve /model \
     --quantization gptq --dtype float16 --max-model-len 131072 \
     --gpu-memory-utilization ${GPU_UTIL} --kv-cache-dtype fp8 --port ${PORT} \
-    --max-num-seqs ${MAX_NUM_SEQS} --max-num-batched-tokens 16384 --enable-prefix-caching \
+    --max-num-seqs ${MAX_NUM_SEQS} --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --enable-prefix-caching \
     --served-model-name ${SERVED_NAME} ${LMO_ARG} \
     ${SPEC_ARG} ${EXTRA_ARGS:-} \
     --enable-auto-tool-choice --tool-call-parser qwen3_xml" \
@@ -83,6 +92,7 @@ docker run -d --name "$NAME" --network host --ipc host \
   echo "name=$NAME"
   echo "port=$PORT"
   echo "max_num_seqs=$MAX_NUM_SEQS"
+  echo "max_num_batched_tokens=$MAX_NUM_BATCHED_TOKENS"
   echo "gpu_memory_utilization=$GPU_UTIL"
   echo "mtp_num_speculative_tokens=$MTP_N"
   echo "language_model_only=$LANGUAGE_MODEL_ONLY"
