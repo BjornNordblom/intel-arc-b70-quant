@@ -6,6 +6,11 @@ base_model: ukisai/Swift-Qwen3.8-27b
 base_model_relation: quantized
 library_name: transformers
 pipeline_tag: image-text-to-text
+language:
+- en
+- multilingual
+datasets:
+- HuggingFaceH4/ultrachat_200k
 tags:
 - gptq
 - int4
@@ -50,11 +55,12 @@ models below continue to apply (see [License](#license-and-attribution)).
 | Source revision | `048328f4059015b63f860a453bf94834af0db683` |
 | Calibration | `HuggingFaceH4/ultrachat_200k` `train_sft[:256]`, truncated to 2048 tokens |
 | Calibration revision | `8049631c405ae6576f93f445c6b8166f76f5505a` |
-| Repository | quantization recipe + verification: https://github.com/BjornNordblom/intel-arc-b70-quant |
+| Code | quantization, verification and Intel-XPU serving recipe: [BjornNordblom/intel-arc-b70-quant](https://github.com/BjornNordblom/intel-arc-b70-quant); serving patches from [SergiioB/intel-arc-pro-b70-inference-cookbook](https://github.com/SergiioB/intel-arc-pro-b70-inference-cookbook) |
 
 The `quantize_config.json` is field-for-field identical to the community
-reference artifact `SergiioB/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` except for
-the quant-time-only `meta.offload_to_disk` flag. Note that the reference artifact
+reference artifact
+[`SergiioB/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16`](https://huggingface.co/SergiioB/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16)
+except for the quant-time-only `meta.offload_to_disk` flag. Note that the reference artifact
 quantizes the **base** Qwen3.8-27B; this repository quantizes the **Swift**
 fine-tune.
 
@@ -107,7 +113,10 @@ Notes for this base model on XPU:
 
 - **MTP draft must be built unquantized.** The checkpoint flags this via the
   `dynamic` exclusion, but the XPU build tested here also needs the draft layer
-  built without `quant_config` (upstream patch used by the recipe repo:
+  built without `quant_config` (patch from [SergiioB's Intel Arc Pro B70
+  cookbook](https://github.com/SergiioB/intel-arc-pro-b70-inference-cookbook),
+  vendored in [the recipe
+  repo](https://github.com/BjornNordblom/intel-arc-b70-quant):
   `B70_MTP_BF16_DRAFT=1` gate plus a small metadata patch for the
   max-model-length boundary).
 - **`vllm-xpu-kernels` < 0.1.14.1 has a mixed-batch limitation**: batching
@@ -118,6 +127,11 @@ Notes for this base model on XPU:
   kernels release alone is not sufficient), or the Python split-dispatch
   backport used by the recipe repo (a single-function change in `vllm/_xpu_ops.py`).
 - `--kv-cache-dtype fp8` is a serving choice, not part of the checkpoint.
+
+Full reproduction path — pinned environments, `quant_swift.py` /
+`verify_quant.py`, `launch.sh` (MTP and vision flags), the XPU patches and the
+benchmark harness — is in the
+[recipe repository](https://github.com/BjornNordblom/intel-arc-b70-quant).
 
 ### Transformers
 
@@ -134,7 +148,7 @@ MTP 3 speculative tokens, fp8 KV cache):
 |---|---|
 | Quantization contract (`verify_quant.py`) | PASS — bits 4, group 128, sym, `desc_act=false`, 15 MTP tensors preserved, 333 vision tensors, 400 modules quantized, `lm_head` untouched |
 | Tiny-model smoke test + endpoint/streaming test | PASS |
-| Decode, p512/g128, median of 5 | 58.8 tok/s (this artifact) vs 60.4 tok/s (`SergiioB/…` reference quant) |
+| Decode, p512/g128, median of 5 | 58.8 tok/s (this artifact) vs 60.4 tok/s ([`SergiioB/…`](https://huggingface.co/SergiioB/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16) reference quant) |
 | MTP draft acceptance | 3.38 / 4 tokens accepted (59.5%) vs 3.43 (60.9%) for the reference quant |
 | Solo TTFT / decode (short prompt) | ~0.95 s / ~59 tok/s |
 | Concurrency | 12-request storm with 4 × ~10k-token prefills: 12/12 HTTP 200, no engine failure, MTP acceptance ~62% (with the mixed-batch fix above) |
@@ -242,8 +256,10 @@ Addendum for this quantization (the uploader's modification notice):
 - UkisAI for the Swift fine-tune and the licence terms above.
 - Alibaba Cloud / Qwen for Qwen3.8-27B (Apache-2.0).
 - The `gptqmodel` project for the quantizer.
-- Intel's Arc Pro B70 XPU inference cookbook for the serving patches (MTP BF16
-  draft, GDN boundary handling, mixed-batch split-dispatch backport).
+- SergiioB's [intel-arc-pro-b70-inference-cookbook](https://github.com/SergiioB/intel-arc-pro-b70-inference-cookbook)
+  for the Intel Arc Pro B70 XPU serving patches (MTP BF16 draft, GDN boundary
+  handling, mixed-batch split-dispatch backport); the copies vendored in the
+  recipe repo are MIT, Copyright (c) 2026 SergiioB.
 
 ## Model card contact
 
