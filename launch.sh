@@ -6,7 +6,10 @@
 #
 # Env overrides (all optional):
 #   MODEL, NAME, PORT, MAX_NUM_SEQS, GPU_UTIL, MTP_N, LANGUAGE_MODEL_ONLY,
-#   IMAGE, PATCH_DIR, TRITON_CACHE, SERVED_NAME, READY_TIMEOUT
+#   IMAGE, PATCH_DIR, TRITON_CACHE, SERVED_NAME, READY_TIMEOUT, EXTRA_ARGS
+#
+# MTP_N=0 disables speculative decoding (needed for the vision bring-up,
+# MAX_NUM_SEQ_FIX.md 11.1). EXTRA_ARGS is appended verbatim to `vllm serve`.
 #
 # Defaults: IMAGE=vllm-xpu-gdn-split:0.1.12.3-p1, NAME=swift-b70-mtp-split,
 # PORT=8080, MAX_NUM_SEQS=4, GPU_UTIL=0.94, MTP_N=3, LANGUAGE_MODEL_ONLY=1
@@ -40,6 +43,8 @@ SERVED_NAME=${SERVED_NAME:-swift38}
 READY_TIMEOUT=${READY_TIMEOUT:-420}
 
 SPEC="{\"method\":\"mtp\",\"num_speculative_tokens\":${MTP_N}}"
+SPEC_ARG="--speculative-config '${SPEC}'"
+if [ "$MTP_N" = "0" ]; then SPEC_ARG=""; fi
 LMO_ARG=""
 if [ "$LANGUAGE_MODEL_ONLY" = "1" ]; then LMO_ARG="--language-model-only"; fi
 RENDER_GROUP=$(stat -c '%g' /dev/dri/render* | sort -u | head -1)
@@ -67,7 +72,7 @@ docker run -d --name "$NAME" --network host --ipc host \
     --gpu-memory-utilization ${GPU_UTIL} --kv-cache-dtype fp8 --port ${PORT} \
     --max-num-seqs ${MAX_NUM_SEQS} --max-num-batched-tokens 16384 --enable-prefix-caching \
     --served-model-name ${SERVED_NAME} ${LMO_ARG} \
-    --speculative-config '${SPEC}' \
+    ${SPEC_ARG} ${EXTRA_ARGS:-} \
     --enable-auto-tool-choice --tool-call-parser qwen3_xml" \
   >/dev/null
 
@@ -83,6 +88,7 @@ docker run -d --name "$NAME" --network host --ipc host \
   echo "language_model_only=$LANGUAGE_MODEL_ONLY"
   echo "served_model_name=$SERVED_NAME"
   echo "spec=$SPEC"
+  echo "extra_args=${EXTRA_ARGS:-}"
 } | tee "$OUT/launcher.out"
 
 deadline=$((SECONDS + READY_TIMEOUT))
