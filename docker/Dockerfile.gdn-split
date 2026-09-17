@@ -1,0 +1,24 @@
+# Derived image: GDN split-dispatch backport so MTP + `--max-num-seqs > 1`
+# stops crashing on mixed spec-decode / prefill batches.
+#
+# Base is the pinned known-good image used by `swift-b70-mtp` (untouched).
+# Only `vllm/_xpu_ops.py` is modified; MTP runtime patches stay mounted at
+# launch exactly as in `launch.sh`.
+#
+# Root cause / fix provenance:
+#   https://github.com/vllm-project/vllm-xpu-kernels/issues/510
+#   upstream fix: vllm-xpu-kernels#537 (v0.1.14), needs vLLM#48109
+#   our base:     vllm-xpu-kernels 0.1.12.3, vLLM 0.27.2rc1.dev77+gac7509e2b
+
+FROM vllm/vllm-openai-xpu@sha256:f01e24f6c7ff01f1e0662234255a1372297d1dbd89d003cf13c8fad3eab1ba4f
+
+LABEL org.opencontainers.image.title="vllm-xpu-gdn-split"
+LABEL b70.patch="gdn split dispatch (backport of vllm-xpu-kernels#537)"
+LABEL b70.upstream="https://github.com/vllm-project/vllm-xpu-kernels/issues/510#issuecomment-5301844645"
+
+COPY patches/gdn_split_dispatch.diff patches/patch_gdn_split.py /opt/b70/patches/
+
+RUN /opt/venv/bin/python /opt/b70/patches/patch_gdn_split.py \
+ && /opt/venv/bin/python -m py_compile /opt/venv/lib/python3.12/site-packages/vllm/_xpu_ops.py \
+ && grep -q B70_GDN_SPLIT_DISPATCH /opt/venv/lib/python3.12/site-packages/vllm/_xpu_ops.py \
+ && sha256sum /opt/venv/lib/python3.12/site-packages/vllm/_xpu_ops.py

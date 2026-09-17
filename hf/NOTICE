@@ -1,0 +1,21 @@
+Swift-Qwen3.8-27B
+Copyright 2026 UkisAI
+
+UkisAI's contribution (the "Swift Contribution") is licensed under the
+Swift Open License v1.0. See LICENSE.
+
+This model is a Derivative Work of Qwen3.8-27B
+  https://huggingface.co/Qwen/Qwen3.8-27B
+  Copyright 2026 Alibaba Cloud
+  Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0.
+
+Changes made by UkisAI (Apache License 2.0, Section 4(b) change notice):
+  - model-*.safetensors, model.safetensors.index.json: model weights were
+    fine-tuned by UkisAI (LoRA adapter trained by UkisAI and merged into the
+    Base Model weights).
+  - generation_config.json: added "min_p": 0 and "repetition_penalty": 1.0.
+  - README.md: replaced. ukisai-banner.png and swift-speed-demo.mp4 added.
+  - All other files (config.json, chat_template.jinja, tokenizer.json,
+    tokenizer_config.json, vocab.json, merges.txt, preprocessor_config.json,
+    video_preprocessor_config.json) are unmodified from Qwen3.8-27B and
+    remain under the Apache License, Version 2.0.

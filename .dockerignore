@@ -1,0 +1,11 @@
+# keep the build context tiny — the 19 GB checkpoint and venvs must never be sent
+.git/
+.venv/
+.venv-xpu/
+__pycache__/
+*.pyc
+_work/
+artifacts/
+logs/
+*.log
+Swift-Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16/

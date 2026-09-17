@@ -1,0 +1,180 @@
+diff --git a/vllm/_xpu_ops.py b/vllm/_xpu_ops.py
+index aea1785897..a23ff81996 100644
+--- a/vllm/_xpu_ops.py
++++ b/vllm/_xpu_ops.py
+@@ -168,37 +168,144 @@ def _gdn_attention_core_xpu_impl(
+         self.conv1d.weight.size(0), self.conv1d.weight.size(2)
+     )
+ 
+-    torch.ops._xpu_C.gdn_attention(
+-        core_attn_out,
+-        z,
+-        projected_states_qkvz,
+-        projected_states_ba,
+-        self.num_k_heads,
+-        self.num_v_heads,
+-        self.head_k_dim,
+-        self.head_v_dim,
+-        conv_state=self.kv_cache[0],
+-        ssm_state=self.kv_cache[1],
+-        conv_weights=conv_weights,
+-        conv_bias=self.conv1d.bias,
+-        activation=self.activation,
+-        A_log=self.A_log,
+-        dt_bias=self.dt_bias,
+-        num_prefills=num_prefills,  # type: ignore[attr-defined]
+-        num_decodes=num_decodes,  # type: ignore[attr-defined]
+-        num_spec_decodes=num_spec_decodes,  # type: ignore[attr-defined]
+-        has_initial_state=has_initial_state,  # type: ignore[attr-defined]
+-        non_spec_query_start_loc=non_spec_query_start_loc,  # type: ignore[attr-defined]
+-        non_spec_token_indx=non_spec_token_indx,  # type: ignore[attr-defined]
+-        non_spec_state_indices_tensor=non_spec_state_indices_tensor,  # type: ignore[attr-defined]
+-        spec_query_start_loc=spec_query_start_loc,  # type: ignore[attr-defined]
+-        spec_token_indx=spec_token_indx,  # type: ignore[attr-defined]
+-        spec_state_indices_tensor=spec_state_indices_tensor,
+-        num_accepted_tokens=num_accepted_tokens,  # type: ignore[attr-defined]
+-        num_actual_tokens=num_actual_tokens,  # type: ignore[attr-defined]
+-        tp_size=self.tp_size,
+-        reorder_input=not self.gqa_interleaved_layout,
++    def _invoke(
++        out: torch.Tensor,
++        z_out: torch.Tensor,
++        qkvz: torch.Tensor,
++        ba: torch.Tensor,
++        n_prefills: int,
++        n_decodes: int,
++        n_spec_decodes: int,
++        initial_state: torch.Tensor | None,
++        ns_query_start_loc: torch.Tensor | None,
++        ns_token_indx: torch.Tensor | None,
++        ns_state_indices: torch.Tensor | None,
++        sp_query_start_loc: torch.Tensor | None,
++        sp_token_indx: torch.Tensor | None,
++        sp_state_indices: torch.Tensor | None,
++        n_accepted_tokens: torch.Tensor | None,
++        n_actual_tokens: int,
++    ) -> None:
++        torch.ops._xpu_C.gdn_attention(
++            out,
++            z_out,
++            qkvz,
++            ba,
++            self.num_k_heads,
++            self.num_v_heads,
++            self.head_k_dim,
++            self.head_v_dim,
++            conv_state=self.kv_cache[0],
++            ssm_state=self.kv_cache[1],
++            conv_weights=conv_weights,
++            conv_bias=self.conv1d.bias,
++            activation=self.activation,
++            A_log=self.A_log,
++            dt_bias=self.dt_bias,
++            num_prefills=n_prefills,
++            num_decodes=n_decodes,
++            num_spec_decodes=n_spec_decodes,
++            has_initial_state=initial_state,
++            non_spec_query_start_loc=ns_query_start_loc,
++            non_spec_token_indx=ns_token_indx,
++            non_spec_state_indices_tensor=ns_state_indices,
++            spec_query_start_loc=sp_query_start_loc,
++            spec_token_indx=sp_token_indx,
++            spec_state_indices_tensor=sp_state_indices,
++            num_accepted_tokens=n_accepted_tokens,
++            num_actual_tokens=n_actual_tokens,
++            tp_size=self.tp_size,
++            reorder_input=not self.gqa_interleaved_layout,
++        )
++
++    if num_spec_decodes == 0 or num_prefills + num_decodes == 0:
++        _invoke(
++            core_attn_out,
++            z,
++            projected_states_qkvz,
++            projected_states_ba,
++            num_prefills,
++            num_decodes,
++            num_spec_decodes,
++            has_initial_state,
++            non_spec_query_start_loc,
++            non_spec_token_indx,
++            non_spec_state_indices_tensor,
++            spec_query_start_loc,
++            spec_token_indx,
++            spec_state_indices_tensor,
++            num_accepted_tokens,
++            num_actual_tokens,
++        )
++        return
++
++    # Mixed spec-decode + non-spec batch. The XPU kernels require the spec
++    # and non-spec groups in separate invocations, so compact each group's
++    # tokens, run, and scatter the outputs back (same split as the CUDA
++    # path). Per-group metadata is already built by the metadata builder.
++    assert non_spec_token_indx is not None
++    assert spec_token_indx is not None
++    num_non_spec_tokens = non_spec_token_indx.numel()
++    num_spec_decode_tokens = spec_token_indx.numel()
++    out_shape = core_attn_out.shape[1:]
++
++    non_spec_indx = non_spec_token_indx.long()
++    core_attn_out_ns = torch.empty(
++        (num_non_spec_tokens, *out_shape),
++        dtype=core_attn_out.dtype,
++        device=core_attn_out.device,
++    )
++    z_ns = torch.empty_like(core_attn_out_ns)
++    _invoke(
++        core_attn_out_ns,
++        z_ns,
++        projected_states_qkvz.index_select(0, non_spec_indx),
++        projected_states_ba.index_select(0, non_spec_indx),
++        num_prefills,
++        num_decodes,
++        0,
++        has_initial_state,
++        non_spec_query_start_loc,
++        None,
++        non_spec_state_indices_tensor,
++        None,
++        None,
++        None,
++        None,
++        num_non_spec_tokens,
++    )
++    core_attn_out.index_copy_(0, non_spec_indx, core_attn_out_ns)
++    z.index_copy_(0, non_spec_indx, z_ns)
++
++    spec_indx = spec_token_indx.long()
++    core_attn_out_spec = torch.empty(
++        (num_spec_decode_tokens, *out_shape),
++        dtype=core_attn_out.dtype,
++        device=core_attn_out.device,
++    )
++    z_spec = torch.empty_like(core_attn_out_spec)
++    _invoke(
++        core_attn_out_spec,
++        z_spec,
++        projected_states_qkvz.index_select(0, spec_indx),
++        projected_states_ba.index_select(0, spec_indx),
++        0,
++        0,
++        num_spec_decodes,
++        None,
++        None,
++        None,
++        None,
++        spec_query_start_loc,
++        torch.arange(
++            num_spec_decode_tokens, dtype=torch.int32, device=spec_indx.device
++        ),
++        spec_state_indices_tensor,
++        num_accepted_tokens,
++        num_spec_decode_tokens,
+     )
++    core_attn_out.index_copy_(0, spec_indx, core_attn_out_spec)
++    z.index_copy_(0, spec_indx, z_spec)
+ 
+ 
+ def _gdn_attention_core_xpu_fake(
+
