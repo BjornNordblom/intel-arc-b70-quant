@@ -48,18 +48,20 @@ import torch
 print(f"device={DEVICE} torch={torch.__version__}", flush=True)
 print(f"source_revision={SOURCE_REVISION} calibration_revision={CALIB_REVISION}", flush=True)
 
-# 1. Processor / tokenizer
-processor = AutoProcessor.from_pretrained(
-    MODEL_ID, revision=SOURCE_REVISION, trust_remote_code=True
-)
+# 1. Processor / tokenizer (revision only applies to Hub ids; local dirs must not
+# forward it to the model constructor)
+src_kwargs = {"trust_remote_code": True}
+if not os.path.isdir(MODEL_ID):
+    src_kwargs["revision"] = SOURCE_REVISION
+processor = AutoProcessor.from_pretrained(MODEL_ID, **src_kwargs)
 
-# 2. Calibration: multi-turn chat formatted with Swift's ChatML template
+# 2. Calibration: multi-turn chat rendered with the model's chat template
 ds = load_dataset(
     CALIB_DATASET,
     revision=CALIB_REVISION,
     split=f"train_sft[:{CALIB_SAMPLES}]",
 )
-tok = processor.tokenizer
+tok = getattr(processor, "tokenizer", processor)  # text-only models: AutoProcessor returns the tokenizer itself
 calibration_dataset = []
 for ex in ds:
     text = processor.apply_chat_template(ex["messages"], tokenize=False, add_generation_prompt=False)
@@ -83,12 +85,11 @@ quantize_config = QuantizeConfig(
 )
 
 # 4. Load on CPU (bf16, offload_to_disk=True default keeps peak RAM bounded)
-print("Loading Swift-Qwen3.8-27b...", flush=True)
+print(f"Loading {MODEL_ID}...", flush=True)
 model = GPTQModel.from_pretrained(
     MODEL_ID,
     quantize_config=quantize_config,
-    revision=SOURCE_REVISION,
-    trust_remote_code=True,
+    **src_kwargs,
 )
 
 # 5. Quantize language backbone (vision tower is not in module_tree -> bf16 passthrough)

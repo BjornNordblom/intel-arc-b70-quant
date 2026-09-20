@@ -1,13 +1,15 @@
-"""Post-quant verification for Swift GPTQ output.
+"""Post-quant verification for GPTQ output (Swift or Hemmingway).
 
 Checks quantize_config.json contract + that MTP draft tensors survived unquantized.
+Env: OUT (output dir), EXPECT_MTPS, EXPECT_VISUAL, EXPECT_QWEIGHT.
 Run: .venv/bin/python verify_quant.py
 """
 import json
+import os
 import sys
 from pathlib import Path
 
-OUT = "Swift-Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16"
+OUT = os.environ.get("OUT", "Swift-Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16")
 EXPECT = {
     "bits": 4,
     "group_size": 128,
@@ -16,7 +18,11 @@ EXPECT = {
     "format": "gptq",
     "lm_head": False,
 }
-EXPECTED_COUNTS = {"mtp": 15, "visual": 333, "qweight": 400}
+EXPECTED_COUNTS = {
+    "mtp": int(os.environ.get("EXPECT_MTPS", "15")),
+    "visual": int(os.environ.get("EXPECT_VISUAL", "333")),
+    "qweight": int(os.environ.get("EXPECT_QWEIGHT", "400")),
+}
 
 qc = json.load(open(f"{OUT}/quantize_config.json"))
 fails = []

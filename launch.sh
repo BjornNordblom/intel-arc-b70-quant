@@ -5,16 +5,16 @@
 # mixed spec-decode + prefill batches no longer abort the engine.
 #
 # Env overrides (all optional):
-#   MODEL, NAME, PORT, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS, GPU_UTIL, MTP_N,
-#   LANGUAGE_MODEL_ONLY, IMAGE, PATCH_DIR, TRITON_CACHE, SERVED_NAME,
-#   READY_TIMEOUT, EXTRA_ARGS
+#   MODEL, NAME, PORT, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS, MAX_MODEL_LEN,
+#   GPU_UTIL, MTP_N, LANGUAGE_MODEL_ONLY, IMAGE, PATCH_DIR, TRITON_CACHE,
+#   SERVED_NAME, READY_TIMEOUT, EXTRA_ARGS
 #
 # MTP_N=0 disables speculative decoding (needed for the vision bring-up,
 # MAX_NUM_SEQ_FIX.md 11.1). EXTRA_ARGS is appended verbatim to `vllm serve`.
 #
 # Defaults: IMAGE=vllm-xpu-gdn-split:0.1.12.3-p1, NAME=swift-b70-mtp-split,
 # PORT=8080, MAX_NUM_SEQS=4, MAX_NUM_BATCHED_TOKENS=8192, GPU_UTIL=0.94,
-# MTP_N=3, LANGUAGE_MODEL_ONLY=1 (text-only), max-model-len 131072, fp8 KV,
+# MTP_N=3, LANGUAGE_MODEL_ONLY=1 (text-only), MAX_MODEL_LEN=131072, fp8 KV,
 # prefix caching.
 #
 # Run the unpatched pinned baseline instead:
@@ -37,6 +37,7 @@ NAME=${NAME:-swift-b70-mtp-split}
 PORT=${PORT:-8080}
 MAX_NUM_SEQS=${MAX_NUM_SEQS:-2}
 MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-8192}
+MAX_MODEL_LEN=${MAX_MODEL_LEN:-131072}
 GPU_UTIL=${GPU_UTIL:-0.94}
 MTP_N=${MTP_N:-3}
 # 1 = text-only (skip the vision tower, default), 0 = load the vision tower too
@@ -77,7 +78,7 @@ docker run -d --name "$NAME" --network host --ipc host \
   -e PYTORCH_ALLOC_CONF=expandable_segments:True \
   --entrypoint bash "$IMAGE" -lc \
   "set -e; python /patch_mtp.py; python /patch_boundary.py; exec vllm serve /model \
-    --quantization gptq --dtype float16 --max-model-len 131072 \
+    --quantization gptq --dtype float16 --max-model-len ${MAX_MODEL_LEN} \
     --gpu-memory-utilization ${GPU_UTIL} --kv-cache-dtype fp8 --port ${PORT} \
     --max-num-seqs ${MAX_NUM_SEQS} --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --enable-prefix-caching \
     --served-model-name ${SERVED_NAME} ${LMO_ARG} \
@@ -93,6 +94,7 @@ docker run -d --name "$NAME" --network host --ipc host \
   echo "port=$PORT"
   echo "max_num_seqs=$MAX_NUM_SEQS"
   echo "max_num_batched_tokens=$MAX_NUM_BATCHED_TOKENS"
+  echo "max_model_len=$MAX_MODEL_LEN"
   echo "gpu_memory_utilization=$GPU_UTIL"
   echo "mtp_num_speculative_tokens=$MTP_N"
   echo "language_model_only=$LANGUAGE_MODEL_ONLY"
