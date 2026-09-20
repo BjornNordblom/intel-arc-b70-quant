@@ -1,6 +1,7 @@
 # Upload plan — publishing the Hemmingway-1 GPTQ INT4 quant to Hugging Face
 
-Status: **UPLOADED — public** at
+Status: **UPLOADED — private since 2026-09-21** (base model loops badly; set
+private rather than deleted so the upload can be reused) at
 https://huggingface.co/bjonor/Hemmingway-1-GPTQ-Int4-sym-G128-MTP-BF16
 (commit `449ada00524cf1de6aaba8fdc46adcde547b090d`, 2026-09-20, uploaded with
 the `hfdeploy` write token). Payload staged in [`upload/`](upload/), weights
