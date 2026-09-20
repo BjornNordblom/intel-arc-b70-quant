@@ -3,8 +3,8 @@
 __pycache__/
 *.pyc
 
-# 19 GB quantized checkpoint lives outside git
-Swift-Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16/
+# 19 GB quantized checkpoints live outside git
+*-GPTQ-Int4-sym-G128-MTP-BF16/
 _tiny_*/
 
 # run logs (quant_xpu.log, logs/gptq_log_*.log)
@@ -15,3 +15,4 @@ logs/
 _work/
 artifacts/
 hf/upload/
+hf-hemmingway1/upload/

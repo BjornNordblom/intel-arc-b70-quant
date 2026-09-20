@@ -1,0 +1,23 @@
+Hemmingway-1-GPTQ-Int4-sym-G128-MTP-BF16
+Copyright 2026 Bjorn Nordblom (quantization)
+=============================================
+
+This distribution is a GPTQ INT4 (W4A16, group_size=128, symmetric,
+desc_act=false) quantization of the model "Hemmingway-1"
+(https://huggingface.co/Altworld/Hemmingway-1), which is built on
+"Qwen3.8-27B" (https://huggingface.co/Qwen/Qwen3.8-27B).
+
+Both source models are licensed under the Apache License, Version 2.0.
+Copyright and attribution for the source models remain with their respective
+authors: Altworld (Hemmingway-1) and Alibaba Cloud (Qwen3.8-27B).
+
+Modifications (2026, Bjorn Nordblom):
+  - The linear projections of the 64 language-model layers were quantized to
+    4-bit GPTQ weights with gptqmodel 7.3.2 on an Intel Arc Pro B70.
+  - The 15 MTP (multi-token-prediction) draft-head tensors were preserved in
+    their original BF16 dtype.
+  - No changes were made to the model architecture, tokenizer, or chat
+    template.
+
+Full details, quantization configuration and reproduction instructions:
+  https://github.com/BjornNordblom/intel-arc-b70-quant
