@@ -22,6 +22,9 @@ N=3) — disclosed in the card. `meta.offload_to_disk_path` sanitized to `null` 
 both `quantize_config.json` and `config.json`.
 
 Companion: [`MODEL_CARD.md`](MODEL_CARD.md) (becomes the HF repo `README.md`).
+Running the quant outside the authors' app produced planning-monologue repeats —
+diagnosed as chat-template thinking mode, not a quant defect. Fix, evidence and
+container flags: [`HEMMINGWAY_LOOPING_FIX.md`](../HEMMINGWAY_LOOPING_FIX.md).
 
 Repo under preparation:
 
