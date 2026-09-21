@@ -1,11 +1,13 @@
 # Upload plan — publishing the Hemmingway-1 GPTQ INT4 quant to Hugging Face
 
-Status: **UPLOADED — private since 2026-09-21** (base model loops badly; set
-private rather than deleted so the upload can be reused) at
+Status: **UPLOADED — public** at
 https://huggingface.co/bjonor/Hemmingway-1-GPTQ-Int4-sym-G128-MTP-BF16
-(commit `449ada00524cf1de6aaba8fdc46adcde547b090d`, 2026-09-20, uploaded with
-the `hfdeploy` write token). Payload staged in [`upload/`](upload/), weights
-hardlinked from the quant output dir, gitignored.
+(initial upload commit `449ada00524cf1de6aaba8fdc46adcde547b090d`, 2026-09-20,
+with the `hfdeploy` write token). Made private 2026-09-21 while the reported
+looping was investigated, then public again the same day with an updated card
+(commit `f606eb1e1125cf9fce48cf552867509235c015d2`) after the cause was pinned to
+chat-template thinking mode rather than the quantization. Payload staged in
+[`upload/`](upload/), weights hardlinked from the quant output dir, gitignored.
 
 Post-upload verification: all 18 files present; all 5 shard LFS SHA-256 match
 `CHECKSUMS.sha256`; `tokenizer.json` LFS SHA-256 matches; `README.md`,
@@ -25,6 +27,11 @@ Companion: [`MODEL_CARD.md`](MODEL_CARD.md) (becomes the HF repo `README.md`).
 Running the quant outside the authors' app produced planning-monologue repeats —
 diagnosed as chat-template thinking mode, not a quant defect. Fix, evidence and
 container flags: [`HEMMINGWAY_LOOPING_FIX.md`](../HEMMINGWAY_LOOPING_FIX.md).
+The public card now carries the required serving flags
+(`--reasoning-parser qwen3 --default-chat-template-kwargs '{"enable_thinking": false}'`),
+the verified configuration, and the MTP status (startup abort on
+`0.27.2rc1.dev77`, upstream XPU+MRoPE fix in nightly `0.29.1rc1.dev422`,
+re-verification pending).
 
 Repo under preparation:
 

@@ -95,40 +95,88 @@ artifact
 
 ### vLLM (Intel XPU)
 
-The serving recipe is the same family as the Swift quant in the code repo.
-Requires a vLLM XPU build with Gated-DeltaNet support (tested there with
-`vllm/vllm-openai-xpu` @ `vllm 0.27.2rc1.dev77+gac7509e2b.xpu`,
-`vllm-xpu-kernels 0.1.12.3`).
+Requires a vLLM XPU build with Gated-DeltaNet support. Verified configuration
+on an Intel Arc Pro B70 (`vllm-xpu-gdn-split:0.1.12.3-p1`,
+`vllm 0.27.2rc1.dev77+gac7509e2b.xpu`):
 
 ```bash
 vllm serve <this-repo> \
   --quantization gptq --dtype float16 --max-model-len 131072 \
-  --gpu-memory-utilization 0.90 --kv-cache-dtype fp8 \
-  --max-num-seqs 1 --max-num-batched-tokens 16384 --enable-prefix-caching
+  --gpu-memory-utilization 0.94 --kv-cache-dtype fp8 \
+  --max-num-seqs 1 --max-num-batched-tokens 8192 --enable-prefix-caching \
+  --language-model-only \
+  --reasoning-parser qwen3 \
+  --default-chat-template-kwargs '{"enable_thinking": false}' \
+  --enable-auto-tool-choice --tool-call-parser qwen3_xml
 ```
 
-This is the configuration that was verified on this artifact (Intel Arc Pro
-B70, `vllm-xpu-gdn-split:0.1.12.3-p1`, ready in 96 s; endpoint + streaming test
-PASS, 33.4 tok/s post-first-token decode on a short prompt).
+Ready in ~100 s; ~32 tok/s post-first-token decode on a short prompt, with
+clean answers and valid tool calls.
 
-Notes for this model on XPU:
+#### Always pass the two reasoning flags
 
-- **MTP speculative decoding did not start on this artifact in the tested
-  runtime.** With `--speculative-config '{"method":"mtp","num_speculative_tokens":N}'`
-  (tried N=1 and N=3) the engine aborts during `profile_run` in the MTP draft
-  dummy run: `RuntimeError: query, key and positions must have the same
-  batch_size and seq_len` (traceback through `qwen3_5_mtp.py` →
-  `qwen3_next.py::_project_qkv_gate` → `rotary_embedding`). This is a runtime
-  limitation, not a checkpoint defect: the 15 `mtp.*` tensors are present and
-  unquantized (`verify_quant.py` confirms). Disable speculative decoding until
-  the runtime path is fixed, or test a newer vLLM XPU build.
-- Because of the above, the MTP BF16-draft runtime gate used for the Swift quant
-  in the recipe repo (`B70_MTP_BF16_DRAFT=1`) was not required for this
-  verification run.
-- The Gated-DeltaNet mixed-batch limitation documented for the Swift quant
-  (`vllm-xpu-kernels < 0.1.14.1`: spec-decode + prefill in one batch aborts the
-  engine) is not reachable here while spec decoding is off.
+The fine-tune defaults to **thinking mode** (`reasoning_effort=xhigh`) whenever
+`enable_thinking` is not set: its chat template injects a reasoning system
+message and opens a think block on every request. On a server without a
+reasoning parser the whole planning monologue is returned inside
+`message.content`; clients store and replay that text, the model then reasons
+about its own previous reasoning, and the output looks like the model is
+**repeating itself and never answering**. Measured on this artifact:
+
+| request | without the flags | with the flags |
+|---|---|---|
+| `Reply with exactly: hello` | planning monologue, no answer | `hello`, 2 tokens, `stop` |
+| short writing request | hundreds of planning tokens, often hits `max_tokens` | clean answer, ~50 tokens |
+
+- `--default-chat-template-kwargs '{"enable_thinking": false}'` answers directly.
+- `--reasoning-parser qwen3` keeps reasoning out of `content` (separate
+  `reasoning` / `reasoning_content` field) for requests that opt back in with
+  `"chat_template_kwargs": {"enable_thinking": true}`.
+- Sampling: the checkpoint's `generation_config.json` sets
+  `temperature 1.0 / top_k 20 / top_p 0.95`. Around `temperature 0.7` the
+  monologue is much less likely to degrade; the shipped 1.0 is where apparent
+  repetition is most visible.
+
+This is **not** a quantization artifact: the unquantized
+`Altworld/Hemmingway-1` weights produce the same planning monologue under the
+same template and defaults (measured on CPU with `transformers`). The fine-tune
+appears to be trained for an internal harness system prompt — the model refers
+to a "system-reminder" with nine planning steps that appears in neither the
+chat template nor the config.
+
+#### MTP speculative decoding
+
+The 15 `mtp.*` draft tensors are present and unquantized (BF16), but MTP did
+**not start** on the runtime above: with
+`--speculative-config '{"method":"mtp","num_speculative_tokens":N}'`
+(tried N=1 and N=3) the engine aborts during `profile_run` in the draft
+`dummy_run` with `RuntimeError: query, key and positions must have the same
+batch_size and seq_len` (traceback `qwen3_5_mtp.py` →
+`qwen3_next.py::_project_qkv_gate` → `rotary_embedding`). The abort happens in
+shape-check code before any weights are used, and it is specific to this
+checkpoint's **text-only** config layout (`Qwen3_5ForCausalLM` /
+`qwen3_5_text`; the community reference checkpoint ships as a multimodal
+`Qwen3_5ForConditionalGeneration` config).
+
+Upstream changed exactly that code path afterwards: vLLM `0.29.1` added XPU +
+MRoPE support to the fused QK-norm/RoPE step (`vllm/vllm-openai-xpu:nightly`
+from 2026-09-20, `0.29.1rc1.dev422`). **Re-verification on this artifact is
+pending.** Until then, serve without `--speculative-config`, or test the
+nightly build yourself:
+
+```bash
+vllm serve <this-repo> ... \
+  --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+```
+
+Other notes:
+
 - `--kv-cache-dtype fp8` is a serving choice, not part of the checkpoint.
+- The Gated-DeltaNet mixed-batch limitation documented for the sibling Swift
+  quant (`vllm-xpu-kernels < 0.1.14.1`: spec-decode + prefill in one batch
+  aborts the engine) is not reachable here while speculative decoding is off.
+- `--enable-auto-tool-choice --tool-call-parser qwen3_xml` is optional; the
+  chat template is the Qwen3-style XML tool format.
 
 ### Transformers
 
@@ -144,8 +192,9 @@ What was actually measured on this artifact:
 |---|---|
 | Quantization contract (`verify_quant.py`) | **PASS** — bits 4, group 128, sym, `desc_act=false`, 15 MTP tensors preserved (none quantized), 400 modules quantized, `lm_head` untouched, no unindexed shards |
 | Tiny-model smoke test (2-layer text `Qwen3_5ForCausalLM`, XPU) | PASS — MTP tensors copied verbatim, none quantized |
-| vLLM XPU serve + endpoint/streaming test (no MTP, `--max-num-seqs 1`) | **PASS** — ready in 96 s, 33.4 tok/s post-first-token decode, TTFT 0.16 s (short prompt) |
-| MTP speculative decoding | **FAILED to start** in the tested runtime (see "How to use"); checkpoint MTP tensors are intact |
+| vLLM XPU serve + endpoint/streaming test (no MTP, `--max-num-seqs 1`) | **PASS** — ready in ~100 s, ~32 tok/s post-first-token decode |
+| Reasoning-mode fix (`--reasoning-parser qwen3` + `enable_thinking=false`) | **PASS** — exact short answers, valid tool calls; without the flags the planning monologue is returned in `content` (see "How to use") |
+| MTP speculative decoding | **FAILED to start** on the tested runtime (`0.27.2rc1.dev77`), upstream fix present in nightly `0.29.1rc1.dev422`, re-verification pending; checkpoint MTP tensors are intact |
 | Standard quality benchmarks (MMLU, GPQA, AIME, IFBench, perplexity) | **Not run** on this artifact |
 | Concurrency / sustained load | **Not measured** |
 
@@ -156,7 +205,8 @@ checkpoint.
 ## Intended use and out-of-scope
 
 - Intended: local inference and evaluation of the Hemmingway-1 fine-tune on
-  Intel XPU / low-VRAM setups, with optional MTP speculative decoding.
+  Intel XPU / low-VRAM setups; MTP speculative decoding pending runtime
+  verification (see "How to use").
 - Out of scope: any safety-critical, medical, legal, or production decision
   making; anything requiring verified accuracy on this specific checkpoint.
   The base model authors' own warning applies: it can be wrong and still sound
@@ -171,6 +221,13 @@ checkpoint.
   fallback threshold report.
 - Serving was verified without MTP only; the MTP draft aborts engine startup
   in the tested XPU runtime (see above).
+- The fine-tune enables thinking mode by default and expects an internal harness
+  system prompt that is not shipped with the weights. Without the serving flags
+  documented above, plain chat requests produce long planning monologues, and
+  clients that display the reasoning stream as normal assistant text will make
+  it look like the model is stuck repeating itself. This is inherited from the
+  base fine-tune (reproduced on unquantized weights), not caused by the
+  quantization.
 - Long-context behaviour was not validated on this artifact (native 262,144).
 - Exporting to other formats (GGUF/AWQ) from this checkpoint is untested.
 
