@@ -20,7 +20,8 @@ BF16 `mtp.*`, 0 visual, `lm_head` untouched); tiny text-model smoke PASS; vLLM
 XPU serve + `test_serve.py` PASS **without MTP** (33.4 tok/s decode, seqs=1).
 MTP speculative decoding aborts engine startup in the pinned runtime
 (`profile_run` → `qwen3_5_mtp` dummy-run rotary seq_len mismatch with N=1 and
-N=3) — disclosed in the card. `meta.offload_to_disk_path` sanitized to `null` in
+N=3) — disclosed in the card, and verified fixed on vLLM nightly
+`0.29.1rc1.dev422` (2026-09-21). `meta.offload_to_disk_path` sanitized to `null` in
 both `quantize_config.json` and `config.json`.
 
 Companion: [`MODEL_CARD.md`](MODEL_CARD.md) (becomes the HF repo `README.md`).
@@ -29,9 +30,11 @@ diagnosed as chat-template thinking mode, not a quant defect. Fix, evidence and
 container flags: [`HEMMINGWAY_LOOPING_FIX.md`](../HEMMINGWAY_LOOPING_FIX.md).
 The public card now carries the required serving flags
 (`--reasoning-parser qwen3 --default-chat-template-kwargs '{"enable_thinking": false}'`),
-the verified configuration, and the MTP status (startup abort on
-`0.27.2rc1.dev77`, upstream XPU+MRoPE fix in nightly `0.29.1rc1.dev422`,
-re-verification pending).
+the verified configuration, and the MTP status: startup abort on
+`0.27.2rc1.dev77`; **verified working** on the unpatched
+`vllm/vllm-openai-xpu:nightly` `0.29.1rc1.dev422` (ready 131 s, mean
+acceptance length 2.38, avg draft acceptance 46%, 45.3 tok/s on a 200-token
+writing request).
 
 Repo under preparation:
 

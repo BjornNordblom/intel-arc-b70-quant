@@ -111,7 +111,8 @@ vllm serve <this-repo> \
 ```
 
 Ready in ~100 s; ~32 tok/s post-first-token decode on a short prompt, with
-clean answers and valid tool calls.
+clean answers and valid tool calls. MTP speculative decoding can be added on
+the newer nightly build (verified, see below).
 
 #### Always pass the two reasoning flags
 
@@ -146,8 +147,8 @@ chat template nor the config.
 
 #### MTP speculative decoding
 
-The 15 `mtp.*` draft tensors are present and unquantized (BF16), but MTP did
-**not start** on the runtime above: with
+The 15 `mtp.*` draft tensors are present and unquantized (BF16). On the pinned
+runtime above MTP did **not** start: with
 `--speculative-config '{"method":"mtp","num_speculative_tokens":N}'`
 (tried N=1 and N=3) the engine aborts during `profile_run` in the draft
 `dummy_run` with `RuntimeError: query, key and positions must have the same
@@ -159,15 +160,22 @@ checkpoint's **text-only** config layout (`Qwen3_5ForCausalLM` /
 `Qwen3_5ForConditionalGeneration` config).
 
 Upstream changed exactly that code path afterwards: vLLM `0.29.1` added XPU +
-MRoPE support to the fused QK-norm/RoPE step (`vllm/vllm-openai-xpu:nightly`
-from 2026-09-20, `0.29.1rc1.dev422`). **Re-verification on this artifact is
-pending.** Until then, serve without `--speculative-config`, or test the
-nightly build yourself:
+MRoPE support to the fused QK-norm/RoPE step. **Verified on the unpatched
+nightly image** (`vllm/vllm-openai-xpu:nightly` from 2026-09-20,
+`0.29.1rc1.dev422`): the engine starts with
 
 ```bash
 vllm serve <this-repo> ... \
   --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
 ```
+
+Measured on this artifact (Arc Pro B70, `--max-num-seqs 1`): ready in 131 s,
+mean acceptance length **2.38**, per-position draft acceptance
+**0.71 / 0.43 / 0.24** (average 46%), and **45.3 tok/s** on a 200-token writing
+request at `temperature 0.7` (the pinned image without MTP was ~32 tok/s, but
+that is a different vLLM build — indicative, not a controlled A/B). The nightly
+image does not carry the Gated-DeltaNet split-dispatch backport from the pinned
+image, so keep `--max-num-seqs 1` there.
 
 Other notes:
 
@@ -194,7 +202,7 @@ What was actually measured on this artifact:
 | Tiny-model smoke test (2-layer text `Qwen3_5ForCausalLM`, XPU) | PASS — MTP tensors copied verbatim, none quantized |
 | vLLM XPU serve + endpoint/streaming test (no MTP, `--max-num-seqs 1`) | **PASS** — ready in ~100 s, ~32 tok/s post-first-token decode |
 | Reasoning-mode fix (`--reasoning-parser qwen3` + `enable_thinking=false`) | **PASS** — exact short answers, valid tool calls; without the flags the planning monologue is returned in `content` (see "How to use") |
-| MTP speculative decoding | **FAILED to start** on the tested runtime (`0.27.2rc1.dev77`), upstream fix present in nightly `0.29.1rc1.dev422`, re-verification pending; checkpoint MTP tensors are intact |
+| MTP speculative decoding | **PASS** on the unpatched nightly `0.29.1rc1.dev422` — starts in 131 s, mean acceptance length 2.38, avg draft acceptance 46%, 45.3 tok/s on a 200-token writing request; **FAILED to start** on the pinned `0.27.2rc1.dev77` runtime (see "How to use") |
 | Standard quality benchmarks (MMLU, GPQA, AIME, IFBench, perplexity) | **Not run** on this artifact |
 | Concurrency / sustained load | **Not measured** |
 
@@ -219,15 +227,18 @@ checkpoint.
 
 - Quantization is lossy; per-module error was not published beyond the RTN
   fallback threshold report.
-- Serving was verified without MTP only; the MTP draft aborts engine startup
-  in the tested XPU runtime (see above).
+- Serving was verified without MTP on the pinned image and with MTP on the
+  nightly image; concurrency and long-context behaviour were not measured.
 - The fine-tune enables thinking mode by default and expects an internal harness
   system prompt that is not shipped with the weights. Without the serving flags
   documented above, plain chat requests produce long planning monologues, and
   clients that display the reasoning stream as normal assistant text will make
   it look like the model is stuck repeating itself. This is inherited from the
   base fine-tune (reproduced on unquantized weights), not caused by the
-  quantization.
+  quantization. Even with thinking disabled, about 1 in 5 sampled replies
+  (`temperature 0.7`, landlord-prompt test) still opened with planning-style
+  prose instead of the answer — retry, lower the temperature, or give the model
+  a short system instruction.
 - Long-context behaviour was not validated on this artifact (native 262,144).
 - Exporting to other formats (GGUF/AWQ) from this checkpoint is untested.
 
