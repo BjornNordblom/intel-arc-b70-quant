@@ -39,6 +39,14 @@ This model is **not affiliated with, endorsed by, or supported by UkisAI or
 Alibaba Cloud**. It is a community quantization; the licence terms of the base
 models below continue to apply (see [License](#license-and-attribution)).
 
+> **Runtime status (2026-09-21).** Recommended serving moved to the stock
+> `vllm/vllm-openai-xpu:nightly` (`0.29.1rc1.dev422`) with the two runtime
+> patches from the recipe repo. MTP-3 starts in ~131 s, mixed prefill +
+> spec-decode batches and a 12-request storm pass at `--max-num-seqs 4`
+> **without** the GDN split-dispatch backport, and `patch_mtp_boundary.py`
+> remains required for requests that end exactly at `--max-model-len`. Details
+> and numbers below.
+
 ## Model details
 
 | | |
@@ -93,39 +101,54 @@ fine-tune.
 
 ## How to use
 
-### vLLM (Intel XPU) — tested configuration
+### vLLM (Intel XPU) — tested configurations
 
-Requires a vLLM XPU build with Gated-DeltaNet support (this card was tested with
-`vllm/vllm-openai-xpu` @ `vllm 0.27.2rc1.dev77+gac7509e2b.xpu`,
-`vllm-xpu-kernels 0.1.12.3`).
+Requires a vLLM XPU build with Gated-DeltaNet support. Two stacks were verified
+on an Arc Pro B70:
+
+**Recommended (2026-09-21): stock nightly + runtime patches.**
+`vllm/vllm-openai-xpu:nightly` (`0.29.1rc1.dev422`), with
+`patch_mtp_nightly.py` and `patch_mtp_boundary.py` applied at container start
+(`launch.sh` does this automatically):
 
 ```bash
 vllm serve <this-repo> \
   --quantization gptq --dtype float16 --max-model-len 131072 \
-  --gpu-memory-utilization 0.92 --kv-cache-dtype fp8 \
-  --max-num-seqs 1 --max-num-batched-tokens 16384 --enable-prefix-caching \
+  --gpu-memory-utilization 0.94 --kv-cache-dtype fp8 \
+  --max-num-seqs 4 --max-num-batched-tokens 8192 --enable-prefix-caching \
   --speculative-config '{"method":"mtp","num_speculative_tokens":3}' \
   --enable-auto-tool-choice --tool-call-parser qwen3_xml \
   --language-model-only
 ```
 
+Measured on this artifact: MTP-3 starts in ~131 s, mean acceptance length 3.05
+(avg draft acceptance 68.4%), solo decode ~61 tok/s, concurrent decode under a
+~10k-token prefill ~14.4 tok/s, 12-request storm 12/12 HTTP 200.
+
+**Earlier pinned stack (reference):** `vllm 0.27.2rc1.dev77+gac7509e2b.xpu`,
+`vllm-xpu-kernels 0.1.12.3`, derived `vllm-xpu-gdn-split:0.1.12.3-p1` image,
+`--max-num-seqs 1`, same MTP-3 configuration.
+
 Notes for this base model on XPU:
 
 - **MTP draft must be built unquantized.** The checkpoint flags this via the
-  `dynamic` exclusion, but the XPU build tested here also needs the draft layer
-  built without `quant_config` (patch from [SergiioB's Intel Arc Pro B70
-  cookbook](https://github.com/SergiioB/intel-arc-pro-b70-inference-cookbook),
-  vendored in [the recipe
-  repo](https://github.com/BjornNordblom/intel-arc-b70-quant):
-  `B70_MTP_BF16_DRAFT=1` gate plus a small metadata patch for the
-  max-model-length boundary).
-- **`vllm-xpu-kernels` < 0.1.14.1 has a mixed-batch limitation**: batching
-  speculative-decode tokens together with prefill tokens aborts the engine
-  (`causal_conv1d does not support spec-decode and non-spec ... tokens in the
-  same invocation`). Use `--max-num-seqs 1`, or kernels ≥ 0.1.14.1 together with
-  a vLLM that also carries the companion vLLM PR #48109 (both are required — the
-  kernels release alone is not sufficient), or the Python split-dispatch
-  backport used by the recipe repo (a single-function change in `vllm/_xpu_ops.py`).
+  `dynamic` exclusion; on the pinned build the draft layer additionally had to be
+  built without `quant_config` (the `B70_MTP_BF16_DRAFT=1` gate). On the nightly
+  build the checkpoint's own `dynamic` marker is honoured and the gate is
+  redundant, though harmless.
+- **`patch_mtp_boundary.py` is still required on nightly.** With spec decoding
+  enabled, an unpatched engine dies when a request runs to exactly
+  `--max-model-len` (`EngineDeadError: Expected spec_token == num_spec_decodes *
+  (num_speculative_tokens + 1)` — the final draft group is truncated). With the
+  patch, six requests with prompt+completion exactly at the limit pass and the
+  engine stays up.
+- **Mixed-batch limitation (pinned stack only).** `vllm-xpu-kernels` < 0.1.14.1
+  abort the engine when speculative-decode tokens and prefill tokens land in the
+  same invocation (`causal_conv1d does not support spec-decode and non-spec ...
+  tokens in the same invocation`). Use `--max-num-seqs 1`, or kernels ≥ 0.1.14.1
+  together with a vLLM carrying the companion vLLM PR #48109, or the Python
+  split-dispatch backport used by the pinned derived image. Not needed on the
+  nightly stack above.
 - `--kv-cache-dtype fp8` is a serving choice, not part of the checkpoint.
 
 Full reproduction path — pinned environments, `quant_swift.py` /
@@ -152,6 +175,7 @@ MTP 3 speculative tokens, fp8 KV cache):
 | MTP draft acceptance | 3.38 / 4 tokens accepted (59.5%) vs 3.43 (60.9%) for the reference quant |
 | Solo TTFT / decode (short prompt) | ~0.95 s / ~59 tok/s |
 | Concurrency | 12-request storm with 4 × ~10k-token prefills: 12/12 HTTP 200, no engine failure, MTP acceptance ~62% (with the mixed-batch fix above) |
+| Nightly re-verification (2026-09-21, `0.29.1rc1.dev422` + patches) | **PASS** — MTP-3 ready ~131 s, mean acceptance length 3.05 (68.4%), solo decode ~61 tok/s, `bench_mixed.py` s1/s2/s3 all pass at `--max-num-seqs 4` (0 errors, engine alive); exact `--max-model-len` boundary passes 6/6 with the boundary patch |
 
 **No standard quality benchmarks (MMLU, GPQA, AIME, IFBench, perplexity) were
 run on this quantized artifact by the uploader.** UkisAI publishes INT4 W4A16

@@ -1,7 +1,12 @@
 # Upload plan — publishing the GPTQ INT4 quant to Hugging Face
 
-Status: **PREP — not uploaded**. Companion: [`MODEL_CARD.md`](MODEL_CARD.md)
-(becomes the HF repo `README.md`).
+Status: **UPLOADED — public** at
+https://huggingface.co/bjonor/Swift-Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16
+(initial upload 2026-09-17; card refreshed 2026-09-21 with the vLLM nightly
+`0.29.1rc1.dev422` re-verification: MTP-3 works, mixed batches pass at
+`--max-num-seqs 4` without the GDN backport, `patch_mtp_boundary.py` still
+required for exact `--max-model-len` runs). Companion:
+[`MODEL_CARD.md`](MODEL_CARD.md) (becomes the HF repo `README.md`).
 
 Repo under preparation:
 
