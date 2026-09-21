@@ -7,7 +7,11 @@
 # Env overrides (all optional):
 #   MODEL, NAME, PORT, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS, MAX_MODEL_LEN,
 #   GPU_UTIL, MTP_N, LANGUAGE_MODEL_ONLY, IMAGE, PATCH_DIR, TRITON_CACHE,
-#   SERVED_NAME, READY_TIMEOUT, EXTRA_ARGS
+#   SERVED_NAME, READY_TIMEOUT, EXTRA_ARGS, PATCHES
+#
+# PATCHES=0 serves a stock image (e.g. vllm/vllm-openai-xpu:nightly) without
+# the runtime MTP patches; use it to bisect upstream behaviour against the
+# derived `vllm-xpu-gdn-split` image. Default 1.
 #
 # MTP_N=0 disables speculative decoding (needed for the vision bring-up,
 # MAX_NUM_SEQ_FIX.md 11.1). EXTRA_ARGS is appended verbatim to `vllm serve`.
@@ -44,6 +48,15 @@ MTP_N=${MTP_N:-3}
 LANGUAGE_MODEL_ONLY=${LANGUAGE_MODEL_ONLY:-1}
 SERVED_NAME=${SERVED_NAME:-swift38}
 READY_TIMEOUT=${READY_TIMEOUT:-420}
+PATCHES=${PATCHES:-1}
+
+PATCH_MOUNTS=()
+PATCH_PRELUDE=""
+if [ "$PATCHES" = "1" ]; then
+  PATCH_MOUNTS=(-v "$PATCH_DIR/patch_mtp_nightly.py:/patch_mtp.py:ro"
+                -v "$PATCH_DIR/patch_mtp_boundary.py:/patch_boundary.py:ro")
+  PATCH_PRELUDE="python /patch_mtp.py; python /patch_boundary.py; "
+fi
 
 SPEC="{\"method\":\"mtp\",\"num_speculative_tokens\":${MTP_N}}"
 SPEC_ARG="--speculative-config '${SPEC}'"
@@ -65,19 +78,25 @@ mkdir -p "$OUT"
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
+# A container under a different name on the same port would make the readiness
+# poll below succeed against the wrong server (matters for PATCHES=0 bisects).
+if ss -ltn 2>/dev/null | grep -q ":${PORT} "; then
+  echo "FAIL: port ${PORT} already in use by another server" >&2
+  exit 1
+fi
+
 docker run -d --name "$NAME" --network host --ipc host \
   --device /dev/dri --group-add "$RENDER_GROUP" \
   -v /dev/dri:/dev/dri:ro \
   -v "$TRITON_CACHE:/workspace/triton_cache" \
   -e TRITON_CACHE_DIR=/workspace/triton_cache \
   -v "$MODEL:/model:ro" \
-  -v "$PATCH_DIR/patch_mtp_nightly.py:/patch_mtp.py:ro" \
-  -v "$PATCH_DIR/patch_mtp_boundary.py:/patch_boundary.py:ro" \
+  "${PATCH_MOUNTS[@]}" \
   -e VLLM_TARGET_DEVICE=xpu -e ZE_FLAT_DEVICE_HIERARCHY=COMPOSITE -e ZE_AFFINITY_MASK=0 \
   -e B70_MTP_BF16_DRAFT=1 -e VLLM_XPU_ENABLE_XPU_GRAPH=1 \
   -e PYTORCH_ALLOC_CONF=expandable_segments:True \
   --entrypoint bash "$IMAGE" -lc \
-  "set -e; python /patch_mtp.py; python /patch_boundary.py; exec vllm serve /model \
+  "set -e; ${PATCH_PRELUDE}exec vllm serve /model \
     --quantization gptq --dtype float16 --max-model-len ${MAX_MODEL_LEN} \
     --gpu-memory-utilization ${GPU_UTIL} --kv-cache-dtype fp8 --port ${PORT} \
     --max-num-seqs ${MAX_NUM_SEQS} --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS} --enable-prefix-caching \
@@ -101,6 +120,7 @@ docker run -d --name "$NAME" --network host --ipc host \
   echo "served_model_name=$SERVED_NAME"
   echo "spec=$SPEC"
   echo "extra_args=${EXTRA_ARGS:-}"
+  echo "patches=$PATCHES"
 } | tee "$OUT/launcher.out"
 
 deadline=$((SECONDS + READY_TIMEOUT))
