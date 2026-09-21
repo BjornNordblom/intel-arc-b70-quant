@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Launch the Swift-Qwen3.8-27b GPTQ-INT4 server on the Arc Pro B70.
 #
-# Defaults to the derived image that carries the GDN split-dispatch backport, so
-# mixed spec-decode + prefill batches no longer abort the engine.
+# Defaults to the stock vLLM XPU nightly with the two runtime MTP patches in
+# patches/ applied at container start. Since vLLM 0.29.1 the nightly no longer
+# needs a GDN split-dispatch backport, so mixed spec-decode + prefill batches at
+# --max-num-seqs > 1 run unpatched; patch_mtp_boundary.py is still required for
+# requests that end exactly at --max-model-len (verified 2026-09-21).
 #
 # Env overrides (all optional):
 #   MODEL, NAME, PORT, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS, MAX_MODEL_LEN,
@@ -16,13 +19,16 @@
 # MTP_N=0 disables speculative decoding (needed for the vision bring-up,
 # MAX_NUM_SEQ_FIX.md 11.1). EXTRA_ARGS is appended verbatim to `vllm serve`.
 #
-# Defaults: IMAGE=vllm-xpu-gdn-split:0.1.12.3-p1, NAME=swift-b70-mtp-split,
+# Defaults: IMAGE=vllm/vllm-openai-xpu:nightly, NAME=swift-b70-mtp-split,
 # PORT=8080, MAX_NUM_SEQS=4, MAX_NUM_BATCHED_TOKENS=8192, GPU_UTIL=0.94,
 # MTP_N=3, LANGUAGE_MODEL_ONLY=1 (text-only), MAX_MODEL_LEN=131072, fp8 KV,
 # prefix caching.
 #
-# Run the unpatched pinned baseline instead:
-#   IMAGE='vllm/vllm-openai-xpu@sha256:f01e24f6c7ff...' MAX_NUM_SEQS=1 ./launch.sh
+# Legacy derived image (pre-0.29.1 GDN split-dispatch backport), still works:
+#   IMAGE=vllm-xpu-gdn-split:0.1.12.3-p1 ./launch.sh
+#
+# Unpatched pinned baseline:
+#   IMAGE='vllm/vllm-openai-xpu@sha256:f01e24f6c7ff...' PATCHES=0 MAX_NUM_SEQS=1 ./launch.sh
 #
 # Load the vision tower (not validated, see MAX_NUM_SEQ_FIX.md 11.1):
 #   LANGUAGE_MODEL_ONLY=0 ./launch.sh
@@ -36,7 +42,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 MODEL=${MODEL:-/opt/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16}
 PATCH_DIR=${PATCH_DIR:-$SCRIPT_DIR/patches}
 TRITON_CACHE=${TRITON_CACHE:-/opt/models/triton_cache}
-IMAGE=${IMAGE:-vllm-xpu-gdn-split:0.1.12.3-p1}
+IMAGE=${IMAGE:-vllm/vllm-openai-xpu:nightly}
 NAME=${NAME:-swift-b70-mtp-split}
 PORT=${PORT:-8080}
 MAX_NUM_SEQS=${MAX_NUM_SEQS:-2}

@@ -173,9 +173,19 @@ Measured on this artifact (Arc Pro B70, `--max-num-seqs 1`): ready in 131 s,
 mean acceptance length **2.38**, per-position draft acceptance
 **0.71 / 0.43 / 0.24** (average 46%), and **45.3 tok/s** on a 200-token writing
 request at `temperature 0.7` (the pinned image without MTP was ~32 tok/s, but
-that is a different vLLM build — indicative, not a controlled A/B). The nightly
-image does not carry the Gated-DeltaNet split-dispatch backport from the pinned
-image, so keep `--max-num-seqs 1` there.
+that is a different vLLM build — indicative, not a controlled A/B). Mixed
+MTP+prefill batches also pass on that build at `--max-num-seqs 4` (verified with
+a 12-request storm harness), so no Gated-DeltaNet split-dispatch backport is
+needed there.
+
+One caveat on the **unpatched** nightly: when a spec-decode request runs to
+exactly `--max-model-len`, the truncated final draft group kills the engine
+(`EngineDeadError: Expected spec_token == num_spec_decodes * (num_speculative_tokens + 1)`).
+The B70 recipe repo's `patch_mtp_boundary.py` fixes this (verified: six
+requests with prompt+completion exactly at the limit pass and the engine stays
+up). Apply it, or avoid requests that terminate exactly at the context cap.
+Since the boundary crash is independent of the checkpoint, this applies to any
+MTP model on that runtime.
 
 Other notes:
 

@@ -1,6 +1,13 @@
 # MAX_NUM_SEQ_FIX — restore `--max-num-seqs > 1` for MTP + GDN on Arc Pro B70
 
-Status: **EXECUTED 2026-09-17** — plan below, execution log in section 15.
+Status: **EXECUTED 2026-09-17, SUPERSEDED 2026-09-21** — the fix works, but
+vLLM `0.29.1` nightly no longer reproduces the mixed-batch guard unpatched
+(`bench_mixed.py` s1/s2/s3 pass at `--max-num-seqs 4` with MTP-3), so the
+derived image is now a legacy fallback rather than the serving default. The
+`patch_mtp_boundary.py` prelude is still required on nightly (exact
+`--max-model-len` boundary, verified). Sections below are the historical plan
+and measurements on the pinned `0.1.12.3` stack.
+
 Outcome: the crash is fixed and verified at `--max-num-seqs` 1/8/16 with a
 Python-only backport baked into a derived image; no changes were made to the
 `swift-b70-mtp` container, its image, or its launch behavior.

@@ -22,7 +22,25 @@ Full MIT notice: [`LICENSE.SergiioB`](LICENSE.SergiioB).
 
 `launch.sh` mounts these files read-only and executes them at container start
 (`python /patch_mtp.py; python /patch_boundary.py`), before `vllm serve`. Override
-their location with `PATCH_DIR=...` if you keep your own copies.
+their location with `PATCH_DIR=...` if you keep your own copies. Set `PATCHES=0`
+to serve a stock image without them.
+
+Verified against vLLM `0.29.1rc1.dev422` (`vllm/vllm-openai-xpu:nightly`,
+2026-09-21): both patches apply and run on that build.
+
+- `patch_mtp_boundary.py` is **still required** there: with spec decoding on, an
+  unpatched nightly engine dies (`EngineDeadError`, `Expected spec_token ==
+  num_spec_decodes * (num_speculative_tokens + 1)`) when a request runs to
+  exactly `--max-model-len`. With the patch, six exact-boundary requests
+  (prompt+completion = limit, spec group truncated at the end) pass and the
+  engine stays up.
+- `patch_mtp_nightly.py` is redundant for checkpoints whose
+  `quantize_config.json` already carries the `mtp.*` dynamic exclusion (ours
+  do), but it is harmless and covers checkpoints that do not.
+- The GDN split-dispatch workaround in the derived image is **not needed** on
+  that build: mixed MTP+prefill and a 12-request storm pass at
+  `--max-num-seqs 4`. See the status note in `../README.md` and
+  `../MAX_NUM_SEQ_FIX.md`.
 
 Also here (first-party, MIT):
 

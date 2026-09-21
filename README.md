@@ -27,6 +27,16 @@ quant-time setting with no runtime effect.
 
 Verified with `verify_quant.py` (see [Verification](#4-verification)).
 
+> **Runtime status (2026-09-21).** Serving defaults moved to the stock
+> `vllm/vllm-openai-xpu:nightly` (vLLM `0.29.1rc1.dev422`) with the two
+> `patches/` applied at container start. That build no longer needs the GDN
+> split-dispatch backport: mixed MTP+prefill batches and a 12-request storm pass
+> at `--max-num-seqs 4` with MTP-3 (`bench_mixed.py` s1/s2/s3, 0 errors).
+> `patch_mtp_boundary.py` **is still required** — an unpatched nightly dies with
+> `EngineDeadError` when a spec-decode request runs to exactly `--max-model-len`.
+> The derived image `vllm-xpu-gdn-split:0.1.12.3-p1` stays as a legacy fallback
+> (`IMAGE=vllm-xpu-gdn-split:0.1.12.3-p1 ./launch.sh`).
+
 ## 1. Environment
 
 Host: Ubuntu, Python 3.14.4, i9-13900K, 64 GB RAM, 1x Intel Arc Pro B70 (30.3 GiB VRAM).
@@ -207,12 +217,19 @@ Serve flags (defaults):
 --enable-auto-tool-choice --tool-call-parser qwen3_xml
 ```
 
-Defaults target the patched image (`vllm-xpu-gdn-split:0.1.12.3-p1`). To serve
-the unpatched pinned base instead:
-`IMAGE='vllm/vllm-openai-xpu@sha256:f01e24f6c7ff…' MAX_NUM_SEQS=1 ./launch.sh`.
+Defaults target the stock nightly (`vllm/vllm-openai-xpu:nightly`) with the
+runtime patches from `patches/` applied at container start. Legacy derived
+image: `IMAGE=vllm-xpu-gdn-split:0.1.12.3-p1 ./launch.sh`; unpatched pinned base:
+`IMAGE='vllm/vllm-openai-xpu@sha256:f01e24f6c7ff…' PATCHES=0 MAX_NUM_SEQS=1 ./launch.sh`.
 Port 8080, one server at a time.
 
 ### Serving appendix: `--max-num-seqs > 1` (MTP + GDN fix)
+
+> Historical note (2026-09-21): superseded for daily serving — vLLM `0.29.1`
+> nightly passes the same concurrency harness without the backport (see the
+> status note at the top). This section documents the original workaround for
+> the pinned `0.1.12.3` stack; the derived image remains available as a
+> fallback, and `patch_mtp_boundary.py` is still used on nightly.
 
 MTP speculative decoding under concurrency used to kill the engine on XPU
 (mixed spec-decode + prefill batches hit a kernel guard). The upstream fix

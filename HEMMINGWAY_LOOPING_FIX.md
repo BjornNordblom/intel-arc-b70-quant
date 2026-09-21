@@ -6,6 +6,11 @@ Outcome: plain requests answer directly, thinking requests keep reasoning out of
 `content`. Verdict: **not quant damage** — the official bf16 base behaves
 identically.
 
+Runtime note (2026-09-21): the repo default moved to the stock
+`vllm/vllm-openai-xpu:nightly` (`0.29.1rc1.dev422`) plus `patches/`;
+`--reasoning-parser qwen3` works there unchanged (reasoning lands in the
+`reasoning` field). The derived image remains the legacy fallback.
+
 Owner: Bjorn
 Related: `hf-hemmingway1/upload/chat_template.jinja`, `hf-hemmingway1/UPLOAD_PLAN.md`,
 container `hem-b70-mtp`, `patches/patch_mtp_nightly.py`
