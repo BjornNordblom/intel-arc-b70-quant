@@ -213,8 +213,8 @@ checkpoint.
 ## Intended use and out-of-scope
 
 - Intended: local inference and evaluation of the Hemmingway-1 fine-tune on
-  Intel XPU / low-VRAM setups; MTP speculative decoding pending runtime
-  verification (see "How to use").
+  Intel XPU / low-VRAM setups; MTP speculative decoding verified on the vLLM
+  nightly runtime (see "How to use").
 - Out of scope: any safety-critical, medical, legal, or production decision
   making; anything requiring verified accuracy on this specific checkpoint.
   The base model authors' own warning applies: it can be wrong and still sound
